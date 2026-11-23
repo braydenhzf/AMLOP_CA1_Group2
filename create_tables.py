@@ -13,7 +13,7 @@ tables = [
         num_orders_last_50days INT,
         num_cancelled_orders_last_50days INT,
         num_refund_orders_last_50days INT,
-        total_payment_last_50days DECIMAL(15,2),
+        total_payment_last_50days DECIMAL(18,6),
         num_associated_customers INT,
         first_order_datetime DATETIME,
         PRIMARY KEY (country_code, customer_id)
@@ -25,9 +25,9 @@ tables = [
         order_id VARCHAR(100) NOT NULL,
         collect_type VARCHAR(100),
         payment_method VARCHAR(100),
-        order_value DECIMAL(15,2),
+        order_value DECIMAL(18,6),
         num_items_ordered INT,
-        refund_value DECIMAL(15,2),
+        refund_value DECIMAL(18,6),
         order_date DATE,
         PRIMARY KEY (country_code, order_id)
     )
