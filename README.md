@@ -63,6 +63,18 @@ If pandas is missing, rerun the package installation command in Step 2.
 If the CSV cannot be found, check that you are in the project folder
 and that the file is named exactly `orders_base.csv`.
 
+## Data preparation for PBI 1–3
+
+- `notebooks/01_data_exploration.ipynb` profiles the historical CSVs and records cleaning recommendations.
+- `notebooks/02_preparation_validation.ipynb` runs the cleaning and feature preparation on the historical files and a practice batch.
+- `src/data_cleaning.py` provides the three cleaners and issue reports for database loading.
+- `src/features.py` provides join checks, features, and preprocessing for model training.
+
+Open the notebooks in order from this repository's VS Code workspace. Both look
+for the historical files in `data/raw/` by default. To reuse the code in a
+script run from the repository root, import from `src.data_cleaning` and
+`src.features`.
+
 ## Working on a task
 
 1. Open your assigned task on the [Group 2 GitHub Project board](https://github.com/users/braydenhzf/projects/2).

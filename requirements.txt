@@ -1,2 +1,5 @@
 pandas
 ipykernel
+numpy
+matplotlib
+scikit-learn>=1.2
