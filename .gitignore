@@ -18,3 +18,7 @@ test_secure_connection.py
 
 # Local generated files
 reports/
+data/raw/
+reports/
+.env.*
+!.env.example

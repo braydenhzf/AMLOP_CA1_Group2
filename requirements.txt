@@ -3,3 +3,6 @@ ipykernel
 numpy
 matplotlib
 scikit-learn>=1.2
+python-dotenv
+PyMySQL
+mlflow
