@@ -1,7 +1,23 @@
+# Python environment
 .venv/
 __pycache__/
-.ipynb_checkpoints/
+
+# Secrets
 .env
+.env.*
+!.env.example
+
+# Temporary deployment files
+mlflow-deployment.zip
+
+# Local database administration
+create_team_users.py
+verify_team_users.py
+check_team_permissions.py
+test_secure_connection.py
+
+# Local generated files
+reports/
 data/raw/
 reports/
 .env.*
