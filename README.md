@@ -239,3 +239,47 @@ scored on the same 191,847 orders from 4 April through 11 May 2023.
 At 0.50, V2 caught 13,605 additional fraud orders and sent 35,266 additional
 legitimate orders for review. Use the team-agreed threshold and review
 capacity when assessing this trade-off in the shared experiment.
+## Incoming data batches (PBI 9)
+
+From the project root, supply URLs for the customer, order and label CSVs:
+
+```powershell
+python download_batch.py --customers-url "CUSTOMERS_CSV_URL" --orders-url "ORDERS_CSV_URL" --labels-url "LABELS_CSV_URL"
+```
+
+Replace the three placeholder values with actual accessible CSV URLs.
+Source filenames may have different postfixes.
+
+Files are saved under `data/raw/incoming/` as:
+- `customers_practice.csv`
+- `orders_practice.csv`
+- `labels_practice.csv`
+
+Existing files with those names are overwritten.
+
+Before reporting success, the downloader checks all three files for:
+- Readable UTF-8 CSV content.
+- A header containing the required columns.
+- Duplicate column names.
+- Consistent field counts in data rows.
+
+Extra columns are allowed. Business-value cleaning is handled separately
+by the team's cleaning functions.
+
+Download or validation failures produce an error and a non-zero exit code.
+Files downloaded before failure may remain on disk. Downstream processing
+must use the returned paths only after `download_batch()` succeeds.
+
+Run the automated checks:
+
+```powershell
+python -m unittest discover -s tests -p "test_batch_input.py" -v
+```
+
+Verification performed:
+- Six automated tests passed.
+- All three historical base files downloaded and validated through a local
+  HTTP server.
+- A missing HTTP resource produced a clear error and exit code 1.
+
+External public practice URLs have not yet been verified.
