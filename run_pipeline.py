@@ -20,6 +20,8 @@ from src.features import (
 )
 from src.pipeline_training import train_available_models
 from src.pipeline_data import reconcile_local_history
+from src.pipeline_splits import apply_reference_splits
+from src.pipeline_rds import reconcile_rds_history
 
 
 def prepare_incoming_batch(
@@ -91,12 +93,27 @@ def main():
         default=4,
         help="Random Forest worker count; -1 uses all available CPUs.",
     )
-    parser.add_argument(
+    history_source = parser.add_mutually_exclusive_group()
+
+    history_source.add_argument(
         "--history-dir",
         type=Path,
         help="Folder containing historical base CSVs for local rehearsal.",
     )
+    history_source.add_argument(
+        "--use-rds",
+        action="store_true",
+        help="Read RDS history and reconcile it with the incoming batch.",
+    )
+    parser.add_argument(
+        "--split-manifest",
+        type=Path,
+        help="CSV containing fixed historical train/validation/test membership.",
+    )
     args = parser.parse_args()
+
+    if args.train_local and args.split_manifest is None:
+        parser.error("--train-local requires --split-manifest.")
 
     if args.train_local:
         if args.threshold is None or not 0 <= args.threshold <= 1:
@@ -124,7 +141,17 @@ def main():
             download_dir,
         )
 
-        if args.history_dir is not None:
+        if args.use_rds:
+            stage = "RDS history reconciliation"
+
+            cleaned, reconciliation_summary = reconcile_rds_history(
+                cleaned,
+                report_dir,
+            )
+
+            print(reconciliation_summary.to_string(index=False))
+
+        elif args.history_dir is not None:
             stage = "local history reconciliation"
 
             cleaned, reconciliation_summary = reconcile_local_history(
@@ -162,23 +189,18 @@ def main():
         print(f"Eligible labelled orders: {len(X):,}")
         print(f"Predictor columns: {X.shape[1]}")
 
-        if args.train_local:
-            stage = "local model training"
+        if args.split_manifest is not None:
+            stage = "reference split assignment"
 
-            development_index, test_index = chronological_split(
-                metadata,
-                evaluation_fraction=0.20,
+            reference = pd.read_csv(
+                args.split_manifest,
+                dtype="string",
             )
-            train_index, validation_index = chronological_split(
-                metadata.loc[development_index],
-                evaluation_fraction=0.25,
-            )
+            splits = apply_reference_splits(metadata, reference)
 
-            splits = {
-                "train": train_index,
-                "validation": validation_index,
-                "test": test_index,
-            }
+            train_index = splits["train"]
+            validation_index = splits["validation"]
+            test_index = splits["test"]
 
             split_summary = pd.DataFrame([
                 {
@@ -199,17 +221,20 @@ def main():
             )
             print(split_summary.to_string(index=False))
 
-            models, model_results = train_available_models(
-                X.loc[train_index],
-                y.loc[train_index],
-                X.loc[validation_index],
-                y.loc[validation_index],
-                report_dir / "models",
-                threshold=args.threshold,
-                rf_n_jobs=args.rf_jobs,
-            )
+            if args.train_local:
+                stage = "local model training"
 
-            print(model_results.to_string(index=False))
+                models, model_results = train_available_models(
+                    X.loc[train_index],
+                    y.loc[train_index],
+                    X.loc[validation_index],
+                    y.loc[validation_index],
+                    report_dir / "models",
+                    threshold=args.threshold,
+                    rf_n_jobs=args.rf_jobs,
+                )
+
+                print(model_results.to_string(index=False))
 
     except Exception as exc:
         message = (
