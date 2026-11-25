@@ -208,3 +208,78 @@ Verification performed:
 - A missing HTTP resource produced a clear error and exit code 1.
 
 External public practice URLs have not yet been verified.
+## Random Forest for PBI 7
+
+Model training code lives in `src/models/`. The Random Forest script reads
+the three base CSVs from `data/raw/`, runs the
+shared cleaning and feature code, and trains on eligible orders with a valid
+fraud label. Both versions use order details and customer tenure available at
+review time. The fitted pipeline includes preprocessing and the forest.
+
+### Run and compare the two versions
+
+From the repository root, run V1 on the validation dates. The latest dates
+inside the training period are reserved for validation. The shared evaluation
+period starts on 4 April 2023 for the historical dataset.
+
+```powershell
+.\.venv\Scripts\python.exe -m src.models.train_random_forest --version v1 --split validation --threshold 0.5
+.\.venv\Scripts\python.exe -m src.models.train_random_forest --version v2 --split validation --threshold 0.5
+```
+
+V1 uses unweighted training. V2 keeps the same settings and uses
+`class_weight="balanced_subsample"` to give the underrepresented fraud class
+more weight during fitting. Compare fraud recall and missed cases alongside
+fraud precision and false alarms to assess the trade-off. Average precision
+compares the ranking of orders across thresholds.
+
+Use the team’s agreed threshold for both final evaluation runs. Each fit uses
+all the eligible training dates, and both versions are scored on the same later
+orders. A flagged order goes to Trust & Safety for review.
+
+```powershell
+$threshold = Read-Host "Team-agreed fraud threshold"
+.\.venv\Scripts\python.exe -m src.models.train_random_forest --version v1 --split evaluation --threshold $threshold
+.\.venv\Scripts\python.exe -m src.models.train_random_forest --version v2 --split evaluation --threshold $threshold
+```
+
+Reports under `reports/pbi7-random-forest/` contain the split dates, model
+parameters, training time, metrics, confusion-matrix counts and join audit.
+Evaluation runs also save the fitted pipeline as a `.joblib` file. Use
+`--n-jobs 4` if you want to limit parallel training on a laptop.
+
+### Log the evaluation to shared MLflow
+
+Set `MLFLOW_TRACKING_URI` in your local `.env` to the team's service URL.
+Validate the setting, then use the team’s experiment name in both runs.
+
+```powershell
+.\.venv\Scripts\python.exe config.py --service mlflow
+$experiment = Read-Host "Shared MLflow experiment name"
+.\.venv\Scripts\python.exe -m src.models.train_random_forest --version v1 --split evaluation --threshold $threshold --log-mlflow --experiment $experiment --run-name vivian-random-forest-v1
+.\.venv\Scripts\python.exe -m src.models.train_random_forest --version v2 --split evaluation --threshold $threshold --log-mlflow --experiment $experiment --run-name vivian-random-forest-v2
+```
+
+Open both runs in MLflow and check the parameters, metrics, `evaluation.json`
+and logged model. For scoring, the model returns the probabilities for classes
+0 and 1 in that order. Apply the logged threshold to the class 1 probability.
+
+### Local model comparison
+
+The local trials used scikit-learn 1.7.2 and a provisional threshold of 0.50.
+V1 caught 11.4% of fraud on the validation dates and missed 17,622 fraud
+orders. V2 tested whether giving fraud cases more weight could reduce those
+misses. Validation recall rose to 80.0% and misses fell to 3,975, while false
+alarms rose from 811 to 26,680.
+
+Both final local fits used 758,025 orders through 3 April 2023. They were
+scored on the same 191,847 orders from 4 April through 11 May 2023.
+
+| Version | Average precision | Fraud precision | Fraud recall | Fraud F1 | Missed fraud | False alarms |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| V1 unweighted | 0.4295 | 58.7% | 18.8% | 0.2845 | 19,539 | 3,176 |
+| V2 weighted | 0.4421 | 32.0% | 75.3% | 0.4496 | 5,934 | 38,442 |
+
+At 0.50, V2 caught 13,605 additional fraud orders and sent 35,266 additional
+legitimate orders for review. Use the team-agreed threshold and review
+capacity when assessing this trade-off in the shared experiment.
