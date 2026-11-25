@@ -163,3 +163,48 @@ They do not establish that deployed services are reachable.
 5. Commit and push your branch, then open a pull request and ask a teammate to review it.
 
 Do not commit `.venv`, the raw CSVs, or `.env` files containing credentials.
+
+## Incoming data batches (PBI 9)
+
+From the project root, supply URLs for the customer, order and label CSVs:
+
+```powershell
+python download_batch.py --customers-url "CUSTOMERS_CSV_URL" --orders-url "ORDERS_CSV_URL" --labels-url "LABELS_CSV_URL"
+```
+
+Replace the three placeholder values with actual accessible CSV URLs.
+Source filenames may have different postfixes.
+
+Files are saved under `data/raw/incoming/` as:
+- `customers_practice.csv`
+- `orders_practice.csv`
+- `labels_practice.csv`
+
+Existing files with those names are overwritten.
+
+Before reporting success, the downloader checks all three files for:
+- Readable UTF-8 CSV content.
+- A header containing the required columns.
+- Duplicate column names.
+- Consistent field counts in data rows.
+
+Extra columns are allowed. Business-value cleaning is handled separately
+by the team's cleaning functions.
+
+Download or validation failures produce an error and a non-zero exit code.
+Files downloaded before failure may remain on disk. Downstream processing
+must use the returned paths only after `download_batch()` succeeds.
+
+Run the automated checks:
+
+```powershell
+python -m unittest discover -s tests -p "test_batch_input.py" -v
+```
+
+Verification performed:
+- Six automated tests passed.
+- All three historical base files downloaded and validated through a local
+  HTTP server.
+- A missing HTTP resource produced a clear error and exit code 1.
+
+External public practice URLs have not yet been verified.
