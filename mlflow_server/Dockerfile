@@ -7,13 +7,12 @@ COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-RUN mkdir -p /app/mlruns /app/mlartifacts
+RUN python -c "import urllib.request; urllib.request.urlretrieve('https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem', '/app/global-bundle.pem')"
+
+COPY start_mlflow.py .
+
+ENV AWS_DEFAULT_REGION=us-east-1
 
 EXPOSE 5000
 
-CMD ["mlflow", "server", \
-     "--host", "0.0.0.0", \
-     "--port", "5000", \
-     "--backend-store-uri", "sqlite:////app/mlruns/mlflow.db", \
-     "--serve-artifacts", \
-     "--artifacts-destination", "/app/mlartifacts"]
+CMD ["python", "start_mlflow.py"]
