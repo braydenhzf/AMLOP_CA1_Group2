@@ -69,6 +69,7 @@ def decision_metrics(labels, fraud_scores, threshold):
     flagged = fraud_scores >= threshold
     tn, fp, fn, tp = confusion_matrix(labels, flagged, labels=[0, 1]).ravel()
     return {
+        "accuracy": float((tn + tp) / (tn + fp + fn + tp)),
         "average_precision": float(average_precision_score(labels, fraud_scores)),
         "fraud_precision": float(precision_score(labels, flagged, zero_division=0)),
         "fraud_recall": float(recall_score(labels, flagged, zero_division=0)),
