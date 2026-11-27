@@ -396,7 +396,8 @@ and trained/logged all six versions in 225.11 seconds. It used threshold
 Live RDS history reconciliation and shared MLflow logging were verified
 using batch-3f2096b4b6fa. All six model versions completed, with their
 metrics and model artifacts logged to the shared server. Total execution
-time was 979.92 seconds.
+time was 979.92 seconds. The XGBoost V2 artifact was downloaded from shared MLflow and successfully
+loaded with joblib; its classes were [0, 1].
 
 The repeated base batch produced zero conflicts and zero inserts,
 preserving existing records and historical split membership.
