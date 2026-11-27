@@ -393,6 +393,13 @@ A full-size local rehearsal processed 949,872 eligible labelled orders
 and trained/logged all six versions in 225.11 seconds. It used threshold
 0.5, eight Random Forest workers and eight XGBoost workers.
 
-Live RDS insertion, the full RDS check after the precision fix, shared
-MLflow logging, and verification with externally supplied incoming
-batches remain pending. PBI 10 is still in progress.
+Live RDS history reconciliation and shared MLflow logging were verified
+using batch-3f2096b4b6fa. All six model versions completed, with their
+metrics and model artifacts logged to the shared server. Total execution
+time was 979.92 seconds.
+
+The repeated base batch produced zero conflicts and zero inserts,
+preserving existing records and historical split membership.
+
+Actual insertion of genuinely new records and verification with a
+separate incoming batch remain pending. PBI 10 is still in progress.
