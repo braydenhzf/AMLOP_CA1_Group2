@@ -239,6 +239,7 @@ scored on the same 191,847 orders from 4 April through 11 May 2023.
 At 0.50, V2 caught 13,605 additional fraud orders and sent 35,266 additional
 legitimate orders for review. Use the team-agreed threshold and review
 capacity when assessing this trade-off in the shared experiment.
+
 ## Incoming data batches (PBI 9)
 
 From the project root, supply URLs for the customer, order and label CSVs:

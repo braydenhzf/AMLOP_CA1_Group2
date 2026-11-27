@@ -19,3 +19,11 @@ test_secure_connection.py
 # Local generated files
 reports/
 data/raw/
+
+# Local MLflow database administration
+create_mlflow_database.py
+create_mlflow_user.py
+test_mlflow_db.py
+
+# Local RDS certificates
+certs/
