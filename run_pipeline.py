@@ -4,8 +4,12 @@ import argparse
 from pathlib import Path
 from time import perf_counter
 from uuid import uuid4
+import os
 
 import pandas as pd
+
+from config import get_mlflow_tracking_uri
+from src.pipeline_tracking import create_tracking_client
 
 from download_batch import download_batch
 from src.data_cleaning import (
@@ -110,7 +114,23 @@ def main():
         type=Path,
         help="CSV containing fixed historical train/validation/test membership.",
     )
+    logging_options = parser.add_mutually_exclusive_group()
+
+    logging_options.add_argument(
+        "--log-mlflow-local",
+        action="store_true",
+        help="Save MLflow runs to a local SQLite store under reports.",
+    )
+    logging_options.add_argument(
+        "--log-mlflow",
+        action="store_true",
+        help="Log runs to the shared MLflow URI configured in .env.",
+    )
+
     args = parser.parse_args()
+
+    if (args.log_mlflow_local or args.log_mlflow) and not args.train_local:
+        parser.error("MLflow logging requires --train-local.")
 
     if args.train_local and args.split_manifest is None:
         parser.error("--train-local requires --split-manifest.")
@@ -133,7 +153,51 @@ def main():
     batch_start = perf_counter()
     print(f"Batch ID: {batch_id}", flush=True)
 
+    tracking_client = None
+    experiment_id = None
+
     try:
+        if args.log_mlflow_local or args.log_mlflow:
+            stage = "MLflow setup"
+            artifact_location = None
+
+            if args.log_mlflow_local:
+                tracking_dir = project_root / "reports" / "mlflow_local"
+                tracking_dir.mkdir(parents=True, exist_ok=True)
+
+                tracking_uri = (
+                    f"sqlite:///{(tracking_dir / 'tracking.db').as_posix()}"
+                )
+                artifact_location = (tracking_dir / "artifacts").as_uri()
+
+                print(
+                    "MLflow destination: local tracking store.",
+                    flush=True,
+                )
+            else:
+                os.environ.setdefault(
+                    "MLFLOW_HTTP_REQUEST_TIMEOUT",
+                    "10",
+                )
+                os.environ.setdefault(
+                    "MLFLOW_HTTP_REQUEST_MAX_RETRIES",
+                    "0",
+                )
+
+                tracking_uri = get_mlflow_tracking_uri()
+
+                print(
+                    "MLflow destination: shared server.",
+                    flush=True,
+                )
+
+            tracking_client, experiment_id = create_tracking_client(
+                tracking_uri,
+                artifact_location=artifact_location,
+            )
+
+        stage = "local preparation"
+
         cleaned, issue_reports, summary = prepare_incoming_batch(
             args.customers_url,
             args.orders_url,
@@ -232,6 +296,9 @@ def main():
                     report_dir / "models",
                     threshold=args.threshold,
                     rf_n_jobs=args.rf_jobs,
+                    tracking_client=tracking_client,
+                    experiment_id=experiment_id,
+                    batch_id=batch_id,
                 )
 
                 print(model_results.to_string(index=False))
@@ -259,7 +326,14 @@ def main():
 
     print(f"Reports saved to: {report_dir}")
     print(f"Total local execution time: {elapsed:.2f} seconds")
-    print("RDS loading and MLflow logging have not run.")
+    print("RDS writes have not run.")
+
+    if args.log_mlflow_local:
+        print("MLflow runs saved in the local tracking store.")
+    elif args.log_mlflow:
+        print("MLflow runs logged to the configured shared server.")
+    else:
+        print("MLflow logging was not requested.")
 
 
 if __name__ == "__main__":
