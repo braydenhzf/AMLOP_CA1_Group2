@@ -10,6 +10,7 @@ from joblib import dump
 from src.models.brayden_logistic_regression import train_logistic_regression
 from src.models.train_random_forest import decision_metrics, train_random_forest
 from src.pipeline_tracking import log_model_outputs, tracked_model_run
+from src.models.train_xgboost import train_xgboost
 
 
 def train_available_models(
@@ -21,6 +22,7 @@ def train_available_models(
     threshold,
     rf_n_jobs=4,
     *,
+    xgb_n_jobs=4,
     tracking_client=None,
     experiment_id=None,
     batch_id=None,
@@ -28,6 +30,9 @@ def train_available_models(
     """Train on training rows and score validation rows only."""
     if rf_n_jobs == 0 or rf_n_jobs < -1:
         raise ValueError("rf_n_jobs must be -1 or a positive integer.")
+
+    if xgb_n_jobs == 0 or xgb_n_jobs < -1:
+        raise ValueError("xgb_n_jobs must be -1 or a positive integer.")
 
     if not 0 <= threshold <= 1:
         raise ValueError(
@@ -84,6 +89,24 @@ def train_available_models(
                 y_train,
                 version="v2",
                 n_jobs=rf_n_jobs,
+            ),
+        ),
+        (
+            "isabelle_xgb_v1",
+            lambda: train_xgboost(
+                X_train,
+                y_train,
+                version="v1",
+                n_jobs=xgb_n_jobs,
+            ),
+        ),
+        (
+            "isabelle_xgb_v2",
+            lambda: train_xgboost(
+                X_train,
+                y_train,
+                version="v2",
+                n_jobs=xgb_n_jobs,
             ),
         ),
     ]

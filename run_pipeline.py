@@ -97,6 +97,12 @@ def main():
         default=4,
         help="Random Forest worker count; -1 uses all available CPUs.",
     )
+    parser.add_argument(
+        "--xgb-jobs",
+        type=int,
+        default=4,
+        help="XGBoost worker count; -1 uses all available CPUs.",
+    )
     history_source = parser.add_mutually_exclusive_group()
 
     history_source.add_argument(
@@ -145,11 +151,11 @@ def main():
         parser.error("--train-local requires --split-manifest.")
 
     if args.train_local:
-        if args.threshold is None or not 0 <= args.threshold <= 1:
-            parser.error("--train-local requires --threshold between 0 and 1.")
-
         if args.rf_jobs == 0 or args.rf_jobs < -1:
             parser.error("--rf-jobs must be -1 or a positive integer.")
+
+        if args.xgb_jobs == 0 or args.xgb_jobs < -1:
+            parser.error("--xgb-jobs must be -1 or a positive integer.")
 
     project_root = Path(__file__).resolve().parent
     batch_id = f"batch-{uuid4().hex[:12]}"
@@ -310,6 +316,7 @@ def main():
                     report_dir / "models",
                     threshold=args.threshold,
                     rf_n_jobs=args.rf_jobs,
+                    xgb_n_jobs=args.xgb_jobs,
                     tracking_client=tracking_client,
                     experiment_id=experiment_id,
                     batch_id=batch_id,
@@ -334,7 +341,7 @@ def main():
 
     if args.train_local:
         print("Available-model training and validation completed.")
-        print("The third member's model is not integrated yet.")
+        print(f"Completed {len(model_results)} model versions.")
     else:
         print("Model training was not requested.")
 

@@ -294,8 +294,9 @@ train the available models with automatic MLflow logging.
 Currently integrated:
 - Brayden's Logistic Regression V1 and V2.
 - Vivian's Random Forest V1 and V2.
+- Isabelle's XGBoost V1 and V2.
 
-The third member's model still needs integration.
+All six versions use the pipeline's shared training and validation rows.
 
 ### Local rehearsal without AWS
 
@@ -320,7 +321,7 @@ Start the local CSV server in one terminal and leave it running:
 In another terminal, run:
 
 ```powershell
-.\.venv\Scripts\python.exe run_pipeline.py --customers-url http://127.0.0.1:8765/customers_base.csv --orders-url http://127.0.0.1:8765/orders_base.csv --labels-url http://127.0.0.1:8765/labels_base.csv --history-dir data/raw --split-manifest reports/pipeline/reference_splits.csv --train-local --threshold 0.5 --rf-jobs 4 --log-mlflow-local
+.\.venv\Scripts\python.exe run_pipeline.py --customers-url http://127.0.0.1:8765/customers_base.csv --orders-url http://127.0.0.1:8765/orders_base.csv --labels-url http://127.0.0.1:8765/labels_base.csv --history-dir data/raw --split-manifest reports/pipeline/reference_splits.csv --train-local --threshold 0.5 --rf-jobs 4 --xgb-jobs 4 --log-mlflow-local
 ```
 
 The threshold of 0.5 is a rehearsal setting. Use the team's agreed
@@ -339,6 +340,8 @@ should find identical records and no new records.
 | `--train-local` | Train the available models on this computer. |
 | `--log-mlflow-local` | Save experiments locally under `reports/mlflow_local/`. |
 | `--log-mlflow` | Upload experiments to the configured shared MLflow service. |
+| `--rf-jobs N` | Set Random Forest CPU workers; -1 uses all available CPUs. |
+| `--xgb-jobs N` | Set XGBoost CPU workers; -1 uses all available CPUs. |
 
 Choose either local history or RDS history. Choose either local MLflow
 logging or shared MLflow logging. Both logging options require training.
@@ -381,10 +384,15 @@ before processing starts.
 .\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_pipeline_*.py" -v
 ```
 
-The 25 offline pipeline tests passed. A full local rehearsal also
-completed training and local MLflow logging for all four available
-model versions.
+All 26 offline pipeline tests passed. The end-to-end test combines
+80 historical records with eight new records and one repeated record.
+All six model versions train and log locally, and their saved models
+can be reloaded for prediction. Validation and test membership stays fixed.
+
+A full-size local rehearsal processed 949,872 eligible labelled orders
+and trained/logged all six versions in 225.11 seconds. It used threshold
+0.5, eight Random Forest workers and eight XGBoost workers.
 
 Live RDS insertion, the full RDS check after the precision fix, shared
-MLflow logging, and verification with genuinely new batch records
-remain pending. PBI 10 is still in progress.
+MLflow logging, and verification with externally supplied incoming
+batches remain pending. PBI 10 is still in progress.
