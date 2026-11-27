@@ -283,3 +283,22 @@ scored on the same 191,847 orders from 4 April through 11 May 2023.
 At 0.50, V2 caught 13,605 additional fraud orders and sent 35,266 additional
 legitimate orders for review. Use the team-agreed threshold and review
 capacity when assessing this trade-off in the shared experiment.
+
+## Pipeline rehearsal (PBI 12)
+
+Generate the offline practice batch:
+
+```powershell
+python prepare_practice_batch.py --history-dir data/raw --split-manifest reports/pipeline/reference_splits.csv
+```
+
+The default batch contains 1,000 synthetic new records and 20 historical
+records per dataset. Expected first-run inserts are 1,000 per table;
+repeating the same batch should insert zero additional records.
+
+Generated CSVs, expected counts and checksums are saved under
+data/raw/incoming/pbi12/practice-001/. This folder is ignored by Git.
+Generation refuses to overwrite an existing output folder.
+
+Three offline tests passed. The complete pipeline's three-minute runtime
+requirement and live database/output checks remain unverified.
