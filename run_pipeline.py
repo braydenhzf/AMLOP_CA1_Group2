@@ -127,7 +127,16 @@ def main():
         help="Log runs to the shared MLflow URI configured in .env.",
     )
 
+    parser.add_argument(
+        "--write-rds",
+        action="store_true",
+        help="Insert only new records into RDS; requires --use-rds.",
+    )
+
     args = parser.parse_args()
+
+    if args.write_rds and not args.use_rds:
+        parser.error("--write-rds requires --use-rds.")
 
     if (args.log_mlflow_local or args.log_mlflow) and not args.train_local:
         parser.error("MLflow logging requires --train-local.")
@@ -206,11 +215,16 @@ def main():
         )
 
         if args.use_rds:
-            stage = "RDS history reconciliation"
+            stage = (
+                "RDS reconciliation and insertion"
+                if args.write_rds
+                else "RDS history reconciliation"
+            )
 
             cleaned, reconciliation_summary = reconcile_rds_history(
                 cleaned,
                 report_dir,
+                write_new=args.write_rds,
             )
 
             print(reconciliation_summary.to_string(index=False))
@@ -326,7 +340,10 @@ def main():
 
     print(f"Reports saved to: {report_dir}")
     print(f"Total local execution time: {elapsed:.2f} seconds")
-    print("RDS writes have not run.")
+    if args.write_rds:
+        print("RDS insertion step completed; see rds_insert_summary.csv.")
+    else:
+        print("RDS writes were not requested.")
 
     if args.log_mlflow_local:
         print("MLflow runs saved in the local tracking store.")

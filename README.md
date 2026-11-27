@@ -283,3 +283,107 @@ Verification performed:
 - A missing HTTP resource produced a clear error and exit code 1.
 
 External public practice URLs have not yet been verified.
+
+## Automated pipeline (PBI 10)
+
+Run commands from the project root. The pipeline downloads, validates and
+cleans the three input CSVs, reconciles history, prepares features and can
+train the available models with automatic MLflow logging.
+
+Currently integrated:
+- Brayden's Logistic Regression V1 and V2.
+- Vivian's Random Forest V1 and V2.
+
+The third member's model still needs integration.
+
+### Local rehearsal without AWS
+
+Create the historical split manifest once. Skip this command if the
+manifest already exists; the script refuses to overwrite it.
+
+```powershell
+.\.venv\Scripts\python.exe create_reference_splits.py --history-dir data/raw
+```
+
+The manifest is saved to `reports/pipeline/reference_splits.csv`.
+Historical train, validation and test membership stays fixed. Previously
+unseen order keys are assigned to training. Reported model metrics use
+the fixed validation set; this command does not score the test set.
+
+Start the local CSV server in one terminal and leave it running:
+
+```powershell
+.\.venv\Scripts\python.exe -m http.server 8765 --bind 127.0.0.1 --directory data/raw
+```
+
+In another terminal, run:
+
+```powershell
+.\.venv\Scripts\python.exe run_pipeline.py --customers-url http://127.0.0.1:8765/customers_base.csv --orders-url http://127.0.0.1:8765/orders_base.csv --labels-url http://127.0.0.1:8765/labels_base.csv --history-dir data/raw --split-manifest reports/pipeline/reference_splits.csv --train-local --threshold 0.5 --rf-jobs 4 --log-mlflow-local
+```
+
+The threshold of 0.5 is a rehearsal setting. Use the team's agreed
+threshold for final comparisons.
+
+This rehearsal resubmits the historical base files, so reconciliation
+should find identical records and no new records.
+
+### History, database writes and logging
+
+| Option | Behaviour |
+| --- | --- |
+| `--history-dir data/raw` | Reconcile against local historical base CSVs. |
+| `--use-rds` | Read historical records from RDS using the shared configuration. |
+| `--write-rds` | Insert only new records into RDS; requires `--use-rds`. |
+| `--train-local` | Train the available models on this computer. |
+| `--log-mlflow-local` | Save experiments locally under `reports/mlflow_local/`. |
+| `--log-mlflow` | Upload experiments to the configured shared MLflow service. |
+
+Choose either local history or RDS history. Choose either local MLflow
+logging or shared MLflow logging. Both logging options require training.
+
+RDS writes are disabled by default. To use shared history, replace
+`--history-dir data/raw` with `--use-rds`. Add `--write-rds` when database
+insertion is intended.
+
+Database reconciliation:
+- Keeps existing identical records without inserting duplicates.
+- Reports conflicting incoming records and retains historical values.
+- Compares money fields at the RDS schema's six-decimal precision.
+- Passes only previously unseen record keys to the insertion function.
+- Uses a transaction for inserts and attempts rollback if insertion fails.
+- Rejects duplicate-key inserts instead of overwriting existing records.
+
+RDS access requires the database settings and TLS certificate described
+in the service-configuration section. Shared logging additionally
+requires an accessible `MLFLOW_TRACKING_URI`.
+
+### Outputs and failure reports
+
+Each execution gets a batch ID. Its reports are saved under
+`reports/pipeline/<batch-id>/`, including cleaning, reconciliation,
+join and split summaries where applicable.
+
+Training saves model files and `models/model_results.csv`. When logging
+is enabled, the CSV also records the corresponding MLflow run IDs.
+
+When the insertion step is requested, `rds_insert_summary.csv` records
+inserted counts, including zero counts for a repeated batch.
+
+Processing failures save the batch ID, stage and error in `failure.txt`
+and return a non-zero exit code. Invalid command options are rejected
+before processing starts.
+
+### Offline checks and verification status
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_pipeline_*.py" -v
+```
+
+The 25 offline pipeline tests passed. A full local rehearsal also
+completed training and local MLflow logging for all four available
+model versions.
+
+Live RDS insertion, the full RDS check after the precision fix, shared
+MLflow logging, and verification with genuinely new batch records
+remain pending. PBI 10 is still in progress.

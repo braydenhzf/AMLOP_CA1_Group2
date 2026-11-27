@@ -1,4 +1,4 @@
-"""Read-only RDS access for the automated pipeline."""
+"""RDS history reconciliation and optional insertion for PBI 10."""
 
 from contextlib import contextmanager
 
@@ -199,10 +199,14 @@ def normalize_rds_table(table_name, frame):
 
     return cleaned, issues
 
-def reconcile_rds_history(incoming_tables, report_dir):
-    """Combine incoming data with RDS history without writing to RDS."""
+def reconcile_rds_history(incoming_tables, report_dir, *, write_new=False):
+    """Reconcile RDS history and optionally insert only new records."""
     from pathlib import Path
     from src.pipeline_data import combine_accepted_data
+    from src.pipeline_rds_write import (
+        insert_new_records,
+        select_new_records,
+    )
 
     report_dir = Path(report_dir)
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -216,6 +220,7 @@ def reconcile_rds_history(incoming_tables, report_dir):
     }
 
     combined_tables = {}
+    new_tables = {}
     summaries = []
 
     for name in TABLE_COLUMNS:
@@ -241,6 +246,12 @@ def reconcile_rds_history(incoming_tables, report_dir):
             keys[name],
         )
 
+        new_tables[name] = select_new_records(
+            history,
+            incoming,
+            keys[name],
+        )
+
         combined_tables[name] = combined
         summaries.append({"dataset": name, **counts})
 
@@ -260,6 +271,43 @@ def reconcile_rds_history(incoming_tables, report_dir):
         report_dir / "rds_reconciliation_summary.csv",
         index=False,
     )
+
+    if write_new:
+        planned_counts = {
+            name: len(frame)
+            for name, frame in new_tables.items()
+        }
+
+        if any(planned_counts.values()):
+            settings = get_database_settings()
+
+            with pymysql.connect(
+                **settings.connection_kwargs(),
+                read_timeout=30,
+                write_timeout=30,
+                autocommit=False,
+            ) as connection:
+                inserted_counts = insert_new_records(
+                    connection,
+                    new_tables,
+                )
+        else:
+            inserted_counts = planned_counts
+
+        insertion_summary = pd.DataFrame([
+            {
+                "dataset": name,
+                "inserted_rows": count,
+            }
+            for name, count in inserted_counts.items()
+        ])
+
+        insertion_summary.to_csv(
+            report_dir / "rds_insert_summary.csv",
+            index=False,
+        )
+
+        print(insertion_summary.to_string(index=False))
 
     return combined_tables, reconciliation_summary
 
