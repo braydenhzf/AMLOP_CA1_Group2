@@ -402,5 +402,16 @@ loaded with joblib; its classes were [0, 1].
 The repeated base batch produced zero conflicts and zero inserts,
 preserving existing records and historical split membership.
 
-Actual insertion of genuinely new records and verification with a
-separate incoming batch remain pending. PBI 10 is still in progress.
+Live insertion was verified using synthetic practice batch
+batch-d2e53c2ba787: 1,000 new records were inserted per table,
+20 existing records were recognised, and zero conflicts occurred.
+
+The integrated repeat run, batch-1aee7f4a5ec2, inserted zero duplicates
+and recognised all 1,020 incoming records per table as identical.
+All six model versions trained using 950,872 eligible labelled orders.
+Historical validation and test membership remained unchanged.
+Parameters, metrics and model artifacts were logged to shared MLflow.
+The integrated repeat run completed in 476.54 seconds.
+
+PBI 10 implementation and live verification are ready for review.
+The three-minute performance requirement remains work for PBI 12.
