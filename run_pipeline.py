@@ -5,6 +5,7 @@ from pathlib import Path
 from time import perf_counter
 from uuid import uuid4
 import os
+import json
 
 import pandas as pd
 
@@ -22,10 +23,11 @@ from src.features import (
     join_training_data,
     prepare_training_data,
 )
-from src.pipeline_training import train_available_models
+from src.pipeline_training import MODEL_NAMES, resolve_model_names, train_available_models
 from src.pipeline_data import reconcile_local_history
 from src.pipeline_splits import apply_reference_splits
 from src.pipeline_rds import reconcile_rds_history
+from src.pipeline_timing import StageTimings
 
 
 def prepare_incoming_batch(
@@ -139,7 +141,28 @@ def main():
         help="Insert only new records into RDS; requires --use-rds.",
     )
 
+    parser.add_argument("--model-workers", type=int, default=2,
+                        help="Number of model fits allowed concurrently (1-6).")
+    parser.add_argument("--rds-batch-size", type=int, default=100000,
+                        help="Historical rows per database query; all rows are read.")
+    parser.add_argument("--rds-transfer", choices=("rows", "compressed"), default="rows",
+                        help="Compressed transfer uses MySQL 8 JSON/COMPRESS SELECTs.")
+    parser.add_argument("--history-cache", action="store_true",
+                        help="Validate live RDS fingerprints before reusing accepted local history.")
+    parser.add_argument(
+        "--models", nargs="+", choices=MODEL_NAMES,
+        help="Explicit model versions to train; omit to train all six. Requires --train-local.",
+    )
     args = parser.parse_args()
+    if args.models is not None and not args.train_local:
+        parser.error("--models requires --train-local.")
+    try:
+        selected_models = resolve_model_names(args.models)
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    if args.history_cache and not args.use_rds:
+        parser.error("--history-cache requires --use-rds.")
 
     if args.write_rds and not args.use_rds:
         parser.error("--write-rds requires --use-rds.")
@@ -150,7 +173,14 @@ def main():
     if args.train_local and args.split_manifest is None:
         parser.error("--train-local requires --split-manifest.")
 
+    if args.rds_batch_size < 1:
+        parser.error("--rds-batch-size must be positive.")
+    if not 1 <= args.model_workers <= 6:
+        parser.error("--model-workers must be between 1 and 6.")
+
     if args.train_local:
+        if args.threshold is None or not 0 <= args.threshold <= 1:
+            parser.error("--train-local requires --threshold between 0 and 1.")
         if args.rf_jobs == 0 or args.rf_jobs < -1:
             parser.error("--rf-jobs must be -1 or a positive integer.")
 
@@ -166,8 +196,22 @@ def main():
 
     stage = "local preparation"
     batch_start = perf_counter()
+    timings = StageTimings(report_dir, started=batch_start)
     print(f"Batch ID: {batch_id}", flush=True)
 
+    models = {}
+    selection = {
+        "scope": "all_six_versions" if selected_models == MODEL_NAMES else "selected_versions",
+        "requested_models": list(selected_models) if args.train_local else [],
+        "completed_models": [],
+        "all_six_models_completed": False,
+        "selected_cloud_workflow_completed": False,
+    }
+    if args.train_local:
+        print("Requested models: " + ", ".join(selected_models), flush=True)
+        (report_dir / "model_selection.json").write_text(
+            json.dumps(selection, indent=2) + "\n", encoding="utf-8",
+        )
     tracking_client = None
     experiment_id = None
 
@@ -206,14 +250,16 @@ def main():
                     flush=True,
                 )
 
-            tracking_client, experiment_id = create_tracking_client(
+            tracking_client, experiment_id = timings.call(
+                "mlflow_setup", create_tracking_client,
                 tracking_uri,
                 artifact_location=artifact_location,
             )
 
         stage = "local preparation"
 
-        cleaned, issue_reports, summary = prepare_incoming_batch(
+        cleaned, issue_reports, summary = timings.call(
+                "incoming_preparation", prepare_incoming_batch,
             args.customers_url,
             args.orders_url,
             args.labels_url,
@@ -227,10 +273,15 @@ def main():
                 else "RDS history reconciliation"
             )
 
-            cleaned, reconciliation_summary = reconcile_rds_history(
+            cleaned, reconciliation_summary = timings.call(
+                "rds_reconciliation", reconcile_rds_history,
                 cleaned,
                 report_dir,
                 write_new=args.write_rds,
+                batch_size=args.rds_batch_size,
+                transfer=args.rds_transfer,
+                timings=timings,
+                cache_dir=project_root / "data/raw/cache/pbi12" if args.history_cache else None,
             )
 
             print(reconciliation_summary.to_string(index=False))
@@ -238,7 +289,8 @@ def main():
         elif args.history_dir is not None:
             stage = "local history reconciliation"
 
-            cleaned, reconciliation_summary = reconcile_local_history(
+            cleaned, reconciliation_summary = timings.call(
+                "local_reconciliation", reconcile_local_history,
                 cleaned,
                 args.history_dir,
                 report_dir,
@@ -248,12 +300,13 @@ def main():
 
         stage = "joining and feature preparation"
 
-        joined, join_audit = join_training_data(
+        joined, join_audit = timings.call(
+                "joining", join_training_data,
             cleaned["customers"],
             cleaned["orders"],
             cleaned["labels"],
         )
-        X, y, metadata = prepare_training_data(joined)
+        X, y, metadata = timings.call("feature_preparation", prepare_training_data, joined)
 
         pd.Series(join_audit, name="rows").to_csv(
             report_dir / "join_audit.csv"
@@ -276,11 +329,12 @@ def main():
         if args.split_manifest is not None:
             stage = "reference split assignment"
 
-            reference = pd.read_csv(
+            reference = timings.call(
+                "reference_manifest_read", pd.read_csv,
                 args.split_manifest,
                 dtype="string",
             )
-            splits = apply_reference_splits(metadata, reference)
+            splits = timings.call("reference_split_assignment", apply_reference_splits, metadata, reference)
 
             train_index = splits["train"]
             validation_index = splits["validation"]
@@ -308,7 +362,8 @@ def main():
             if args.train_local:
                 stage = "local model training"
 
-                models, model_results = train_available_models(
+                models, model_results = timings.call(
+                "training_evaluation_and_logging", train_available_models,
                     X.loc[train_index],
                     y.loc[train_index],
                     X.loc[validation_index],
@@ -317,6 +372,8 @@ def main():
                     threshold=args.threshold,
                     rf_n_jobs=args.rf_jobs,
                     xgb_n_jobs=args.xgb_jobs,
+                    model_workers=args.model_workers,
+                    model_names=selected_models,
                     tracking_client=tracking_client,
                     experiment_id=experiment_id,
                     batch_id=batch_id,
@@ -325,6 +382,10 @@ def main():
                 print(model_results.to_string(index=False))
 
     except Exception as exc:
+        try:
+            timings.finish(success=False, model_selection=selection)
+        except Exception:
+            pass
         message = (
             f"Batch: {batch_id}\n"
             f"Stage: {stage}\n"
@@ -337,6 +398,21 @@ def main():
         parser.exit(1, message)
 
     elapsed = perf_counter() - batch_start
+    cloud_requested = bool(args.use_rds and args.write_rds and args.train_local and args.log_mlflow)
+    selection["completed_models"] = list(models)
+    selection["all_six_models_completed"] = set(models) == set(MODEL_NAMES)
+    selection["selected_cloud_workflow_completed"] = bool(
+        cloud_requested and set(models) == set(selected_models)
+    )
+    if args.train_local:
+        (report_dir / "model_selection.json").write_text(
+            json.dumps(selection, indent=2) + "\n", encoding="utf-8",
+        )
+    performance = timings.finish(
+        success=True, elapsed=elapsed,
+        complete_workflow=cloud_requested and selection["all_six_models_completed"],
+        model_selection=selection,
+    )
     print(f"Local preparation completed for {batch_id}.")
 
     if args.train_local:
@@ -347,6 +423,13 @@ def main():
 
     print(f"Reports saved to: {report_dir}")
     print(f"Total local execution time: {elapsed:.2f} seconds")
+    print("Stage timings saved to stage_timings.csv and performance_summary.json.")
+    if performance["complete_cloud_workflow"]:
+        print("PBI 12 runtime requirement:", "MET" if performance["pbi12_runtime_check_passed"] else "NOT MET")
+    elif selection["selected_cloud_workflow_completed"]:
+        print(f"Selected-model rehearsal: {len(models)} of {len(MODEL_NAMES)} versions.")
+        print("Selected-model runtime (180s):", "MET" if performance["within_time_limit"] else "NOT MET")
+        print("This timing covers the selected models; the all-six-model criterion was not evaluated.")
     if args.write_rds:
         print("RDS insertion step completed; see rds_insert_summary.csv.")
     else:

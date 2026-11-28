@@ -50,7 +50,7 @@ def load_historical_data(data_dir):
 
 
 def train_random_forest(features, labels, version, n_jobs=-1):
-    """Fit a pipeline on already prepared training rows."""
+    """Fit a pipeline on prepared training rows using dense features."""
     classifier = RandomForestClassifier(
         n_estimators=100,
         max_depth=12,
@@ -59,9 +59,15 @@ def train_random_forest(features, labels, version, n_jobs=-1):
         n_jobs=n_jobs,
         class_weight=CLASS_WEIGHTS[version],
     )
-    model = Pipeline(
-        [("preprocessor", build_preprocessor()), ("classifier", classifier)]
-    )
+
+    preprocessor = build_preprocessor()
+    preprocessor.sparse_threshold = 0.0
+
+    model = Pipeline([
+        ("preprocessor", preprocessor),
+        ("classifier", classifier),
+    ])
+
     return model.fit(features, labels)
 
 
