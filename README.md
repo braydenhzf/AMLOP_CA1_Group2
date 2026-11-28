@@ -164,50 +164,6 @@ They do not establish that deployed services are reachable.
 
 Do not commit `.venv`, the raw CSVs, or `.env` files containing credentials.
 
-## Incoming data batches (PBI 9)
-
-From the project root, supply URLs for the customer, order and label CSVs:
-
-```powershell
-python download_batch.py --customers-url "CUSTOMERS_CSV_URL" --orders-url "ORDERS_CSV_URL" --labels-url "LABELS_CSV_URL"
-```
-
-Replace the three placeholder values with actual accessible CSV URLs.
-Source filenames may have different postfixes.
-
-Files are saved under `data/raw/incoming/` as:
-- `customers_practice.csv`
-- `orders_practice.csv`
-- `labels_practice.csv`
-
-Existing files with those names are overwritten.
-
-Before reporting success, the downloader checks all three files for:
-- Readable UTF-8 CSV content.
-- A header containing the required columns.
-- Duplicate column names.
-- Consistent field counts in data rows.
-
-Extra columns are allowed. Business-value cleaning is handled separately
-by the team's cleaning functions.
-
-Download or validation failures produce an error and a non-zero exit code.
-Files downloaded before failure may remain on disk. Downstream processing
-must use the returned paths only after `download_batch()` succeeds.
-
-Run the automated checks:
-
-```powershell
-python -m unittest discover -s tests -p "test_batch_input.py" -v
-```
-
-Verification performed:
-- Six automated tests passed.
-- All three historical base files downloaded and validated through a local
-  HTTP server.
-- A missing HTTP resource produced a clear error and exit code 1.
-
-External public practice URLs have not yet been verified.
 ## Random Forest for PBI 7
 
 Model training code lives in `src/models/`. The Random Forest script reads
@@ -283,6 +239,182 @@ scored on the same 191,847 orders from 4 April through 11 May 2023.
 At 0.50, V2 caught 13,605 additional fraud orders and sent 35,266 additional
 legitimate orders for review. Use the team-agreed threshold and review
 capacity when assessing this trade-off in the shared experiment.
+
+## Incoming data batches (PBI 9)
+
+From the project root, supply URLs for the customer, order and label CSVs:
+
+```powershell
+python download_batch.py --customers-url "CUSTOMERS_CSV_URL" --orders-url "ORDERS_CSV_URL" --labels-url "LABELS_CSV_URL"
+```
+
+Replace the three placeholder values with actual accessible CSV URLs.
+Source filenames may have different postfixes.
+
+Files are saved under `data/raw/incoming/` as:
+- `customers_practice.csv`
+- `orders_practice.csv`
+- `labels_practice.csv`
+
+Existing files with those names are overwritten.
+
+Before reporting success, the downloader checks all three files for:
+- Readable UTF-8 CSV content.
+- A header containing the required columns.
+- Duplicate column names.
+- Consistent field counts in data rows.
+
+Extra columns are allowed. Business-value cleaning is handled separately
+by the team's cleaning functions.
+
+Download or validation failures produce an error and a non-zero exit code.
+Files downloaded before failure may remain on disk. Downstream processing
+must use the returned paths only after `download_batch()` succeeds.
+
+Run the automated checks:
+
+```powershell
+python -m unittest discover -s tests -p "test_batch_input.py" -v
+```
+
+Verification performed:
+- Six automated tests passed.
+- All three historical base files downloaded and validated through a local
+  HTTP server.
+- A missing HTTP resource produced a clear error and exit code 1.
+
+External public practice URLs have not yet been verified.
+
+## Automated pipeline (PBI 10)
+
+Run commands from the project root. The pipeline downloads, validates and
+cleans the three input CSVs, reconciles history, prepares features and can
+train the available models with automatic MLflow logging.
+
+Currently integrated:
+- Brayden's Logistic Regression V1 and V2.
+- Vivian's Random Forest V1 and V2.
+- Isabelle's XGBoost V1 and V2.
+
+All six versions use the pipeline's shared training and validation rows.
+
+### Local rehearsal without AWS
+
+Create the historical split manifest once. Skip this command if the
+manifest already exists; the script refuses to overwrite it.
+
+```powershell
+.\.venv\Scripts\python.exe create_reference_splits.py --history-dir data/raw
+```
+
+The manifest is saved to `reports/pipeline/reference_splits.csv`.
+Historical train, validation and test membership stays fixed. Previously
+unseen order keys are assigned to training. Reported model metrics use
+the fixed validation set; this command does not score the test set.
+
+Start the local CSV server in one terminal and leave it running:
+
+```powershell
+.\.venv\Scripts\python.exe -m http.server 8765 --bind 127.0.0.1 --directory data/raw
+```
+
+In another terminal, run:
+
+```powershell
+.\.venv\Scripts\python.exe run_pipeline.py --customers-url http://127.0.0.1:8765/customers_base.csv --orders-url http://127.0.0.1:8765/orders_base.csv --labels-url http://127.0.0.1:8765/labels_base.csv --history-dir data/raw --split-manifest reports/pipeline/reference_splits.csv --train-local --threshold 0.5 --rf-jobs 4 --xgb-jobs 4 --log-mlflow-local
+```
+
+The threshold of 0.5 is a rehearsal setting. Use the team's agreed
+threshold for final comparisons.
+
+This rehearsal resubmits the historical base files, so reconciliation
+should find identical records and no new records.
+
+### History, database writes and logging
+
+| Option | Behaviour |
+| --- | --- |
+| `--history-dir data/raw` | Reconcile against local historical base CSVs. |
+| `--use-rds` | Read historical records from RDS using the shared configuration. |
+| `--write-rds` | Insert only new records into RDS; requires `--use-rds`. |
+| `--train-local` | Train the available models on this computer. |
+| `--log-mlflow-local` | Save experiments locally under `reports/mlflow_local/`. |
+| `--log-mlflow` | Upload experiments to the configured shared MLflow service. |
+| `--rf-jobs N` | Set Random Forest CPU workers; -1 uses all available CPUs. |
+| `--xgb-jobs N` | Set XGBoost CPU workers; -1 uses all available CPUs. |
+
+Choose either local history or RDS history. Choose either local MLflow
+logging or shared MLflow logging. Both logging options require training.
+
+RDS writes are disabled by default. To use shared history, replace
+`--history-dir data/raw` with `--use-rds`. Add `--write-rds` when database
+insertion is intended.
+
+Database reconciliation:
+- Keeps existing identical records without inserting duplicates.
+- Reports conflicting incoming records and retains historical values.
+- Compares money fields at the RDS schema's six-decimal precision.
+- Passes only previously unseen record keys to the insertion function.
+- Uses a transaction for inserts and attempts rollback if insertion fails.
+- Rejects duplicate-key inserts instead of overwriting existing records.
+
+RDS access requires the database settings and TLS certificate described
+in the service-configuration section. Shared logging additionally
+requires an accessible `MLFLOW_TRACKING_URI`.
+
+### Outputs and failure reports
+
+Each execution gets a batch ID. Its reports are saved under
+`reports/pipeline/<batch-id>/`, including cleaning, reconciliation,
+join and split summaries where applicable.
+
+Training saves model files and `models/model_results.csv`. When logging
+is enabled, the CSV also records the corresponding MLflow run IDs.
+
+When the insertion step is requested, `rds_insert_summary.csv` records
+inserted counts, including zero counts for a repeated batch.
+
+Processing failures save the batch ID, stage and error in `failure.txt`
+and return a non-zero exit code. Invalid command options are rejected
+before processing starts.
+
+### Offline checks and verification status
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_pipeline_*.py" -v
+```
+
+All 26 offline pipeline tests passed. The end-to-end test combines
+80 historical records with eight new records and one repeated record.
+All six model versions train and log locally, and their saved models
+can be reloaded for prediction. Validation and test membership stays fixed.
+
+A full-size local rehearsal processed 949,872 eligible labelled orders
+and trained/logged all six versions in 225.11 seconds. It used threshold
+0.5, eight Random Forest workers and eight XGBoost workers.
+
+Live RDS history reconciliation and shared MLflow logging were verified
+using batch-3f2096b4b6fa. All six model versions completed, with their
+metrics and model artifacts logged to the shared server. Total execution
+time was 979.92 seconds. The XGBoost V2 artifact was downloaded from shared MLflow and successfully
+loaded with joblib; its classes were [0, 1].
+
+The repeated base batch produced zero conflicts and zero inserts,
+preserving existing records and historical split membership.
+
+Live insertion was verified using synthetic practice batch
+batch-d2e53c2ba787: 1,000 new records were inserted per table,
+20 existing records were recognised, and zero conflicts occurred.
+
+The integrated repeat run, batch-1aee7f4a5ec2, inserted zero duplicates
+and recognised all 1,020 incoming records per table as identical.
+All six model versions trained using 950,872 eligible labelled orders.
+Historical validation and test membership remained unchanged.
+Parameters, metrics and model artifacts were logged to shared MLflow.
+The integrated repeat run completed in 476.54 seconds.
+
+PBI 10 implementation and live verification are ready for review.
+The three-minute performance requirement remains work for PBI 12.
 
 ## Pipeline rehearsal (PBI 12)
 
