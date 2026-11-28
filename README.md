@@ -432,5 +432,29 @@ Generated CSVs, expected counts and checksums are saved under
 data/raw/incoming/pbi12/practice-001/. This folder is ignored by Git.
 Generation refuses to overwrite an existing output folder.
 
-Three offline tests passed. The complete pipeline's three-minute runtime
-requirement and live database/output checks remain unverified.
+### Verification and demonstration notes
+
+The practice-batch generator passed three offline tests.
+
+Output verification for batch-da16925b8978 confirmed:
+- RDS contains 1,000 practice records in each table.
+- The repeated batch inserted zero duplicates.
+- All six shared MLflow runs finished successfully.
+- Each run contains training/validation parameters, metrics and a model artifact.
+- The full run took 328.08 seconds, exceeding the 180-second requirement.
+
+A deliberate missing-input test, batch-a9f9682b0987, returned exit code 1.
+Its failure.txt records the batch identifier, failed stage and error.
+Its performance summary records success as false.
+
+Demonstration sequence:
+1. Confirm RDS and shared MLflow are available.
+2. Explain the three input CSVs and expected record counts.
+3. Launch the integrated pipeline using the supplied URLs and configuration.
+4. Show the RDS records and duplicate-handling results.
+5. Show all six model runs, parameters, metrics and artifacts in shared MLflow.
+6. Show stage_timings.csv and performance_summary.json.
+7. Explain the controlled failure test and its saved failure report.
+
+The final demonstration command and fresh-batch rehearsal will be confirmed
+after the runtime improvements in subtask #50. Subtask #51 remains in progress.
