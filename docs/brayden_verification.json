@@ -1,0 +1,132 @@
+{
+  "date": "2026-11-28",
+  "timezone": "Asia/Singapore",
+  "pbi13": {
+    "run_id": "brayden-20261128T154157Z-aa6b89f4",
+    "status": "FINISHED",
+    "metadata": {
+      "orders_total": 949889,
+      "labelled_orders": 949874,
+      "fraud_orders": 104422,
+      "labelled_order_value": 6590549.245187,
+      "fraud_order_value": 812911.142062,
+      "first_order_date": "2022-11-12",
+      "last_order_date": "2023-05-11",
+      "invalid_label_orders": 0,
+      "labelled_orders_missing_value": 0,
+      "fraud_orders_missing_value": 0,
+      "include_practice": false,
+      "practice_orders_in_date_scope": 3000,
+      "excluded_practice_orders": 3000,
+      "requested_start_date": null,
+      "requested_end_date": null,
+      "unlabelled_or_invalid_orders": 15,
+      "query_seconds": 34.88344900000084,
+      "snapshot_started_utc": "2026-11-28T15:41:22.554541+00:00",
+      "minimum_labelled_for_comparisons": 30,
+      "overall_fraud_rate": 0.10993247525461272
+    },
+    "elapsed_seconds": 41.48324340000545,
+    "analyses": [
+      {
+        "name": "order_value",
+        "question": "How does fraud risk and fraud-labelled order value vary across order-value bands?",
+        "insight": "SGD 100 to under 200 has the highest observed fraud rate among supported value bands: 57.2% (103/180 labelled orders). Compare its order volume and value exposure before allocating review effort.",
+        "limitation": "Value bands are fixed operational groups. Country mix may affect global comparisons; the CSV retains country detail. Order value is not confirmed fraud loss."
+      },
+      {
+        "name": "weekday_collection",
+        "question": "Which weekday and collection-method combinations have elevated fraud rates?",
+        "insight": "Thursday, pickup, has the highest observed rate among supported groups: 30.6% (509/1,666 labelled orders). Use the pattern to plan investigation coverage alongside order volume.",
+        "limitation": "Order dates support weekday analysis, not hour-of-day analysis. These associations do not establish causation or account for every country/customer difference."
+      },
+      {
+        "name": "customer_concentration",
+        "question": "Which customers account for the most fraud-labelled orders, and how concentrated are those orders?",
+        "insight": "The top 20 customers account for 759 fraud-labelled orders, or 0.7% of all fraud-labelled orders in scope. Prioritise investigation using repeated fraud counts together with each customer's labelled-order volume.",
+        "limitation": "Ranked by fraud-labelled order count, then fraud-labelled order value. A high rate based on very few orders is uncertain. This is an investigation list, not an automated customer decision."
+      }
+    ]
+  },
+  "pbi14": {
+    "successful_report": {
+      "run_id": "brayden-20261128T155124Z-0dd6c065",
+      "status": "FINISHED",
+      "metadata": {
+        "orders_total": 949889,
+        "labelled_orders": 949874,
+        "fraud_orders": 104422,
+        "labelled_order_value": 6590549.245187,
+        "fraud_order_value": 812911.142062,
+        "first_order_date": "2022-11-12",
+        "last_order_date": "2023-05-11",
+        "invalid_label_orders": 0,
+        "labelled_orders_missing_value": 0,
+        "fraud_orders_missing_value": 0,
+        "include_practice": false,
+        "practice_orders_in_date_scope": 3000,
+        "excluded_practice_orders": 3000,
+        "requested_start_date": null,
+        "requested_end_date": null,
+        "unlabelled_or_invalid_orders": 15,
+        "query_seconds": 36.42769729999418,
+        "snapshot_started_utc": "2026-11-28T15:50:47.198940+00:00",
+        "minimum_labelled_for_comparisons": 30,
+        "overall_fraud_rate": 0.10993247525461272
+      },
+      "orchestration": {
+        "engine": "Prefect",
+        "prefect_flow_run_id": "92b4faf8-0883-4d5d-8959-fd2a2ffe7ed2",
+        "timing_scope": "Flow body through report generation; inspect Prefect run duration for engine overhead."
+      },
+      "elapsed_seconds": 44.122127499998896,
+      "analyses": [
+        {
+          "name": "order_value",
+          "question": "How does fraud risk and fraud-labelled order value vary across order-value bands?",
+          "insight": "SGD 100 to under 200 has the highest observed fraud rate among supported value bands: 57.2% (103/180 labelled orders). Compare its order volume and value exposure before allocating review effort.",
+          "limitation": "Value bands are fixed operational groups. Country mix may affect global comparisons; the CSV retains country detail. Order value is not confirmed fraud loss."
+        },
+        {
+          "name": "weekday_collection",
+          "question": "Which weekday and collection-method combinations have elevated fraud rates?",
+          "insight": "Thursday, pickup, has the highest observed rate among supported groups: 30.6% (509/1,666 labelled orders). Use the pattern to plan investigation coverage alongside order volume.",
+          "limitation": "Order dates support weekday analysis, not hour-of-day analysis. These associations do not establish causation or account for every country/customer difference."
+        },
+        {
+          "name": "customer_concentration",
+          "question": "Which customers account for the most fraud-labelled orders, and how concentrated are those orders?",
+          "insight": "The top 20 customers account for 759 fraud-labelled orders, or 0.7% of all fraud-labelled orders in scope. Prioritise investigation using repeated fraud counts together with each customer's labelled-order volume.",
+          "limitation": "Ranked by fraud-labelled order count, then fraud-labelled order value. A high rate based on very few orders is uncertain. This is an investigation list, not an automated customer decision."
+        }
+      ]
+    },
+    "flow_name": "wisteria-weasel",
+    "logged_flow_main_seconds": 44.13,
+    "all_six_tasks_completed": true,
+    "controlled_failure": {
+      "prefect_flow_run_id": "7ec3d076-7f6c-4372-8b2c-a604aa2d7929",
+      "status": "FAILED",
+      "failed_at_utc": "2026-11-28T15:52:47.217609+00:00",
+      "elapsed_seconds": 0.31597299999702955,
+      "error_type": "UnfinishedRun",
+      "error": "Run is in PENDING state, its result is not available.",
+      "previous_report_not_relabelled": true
+    },
+    "observed_failure_exit_code": 1,
+    "failure_read_task_root_cause": "Intentional RuntimeError before RDS access",
+    "latest_success_pointer_after_failure": {
+      "run_id": "brayden-20261128T155124Z-0dd6c065",
+      "report": "brayden-20261128T155124Z-0dd6c065/index.html"
+    }
+  },
+  "offline_tests": {
+    "analytics": 11,
+    "flow_functions": 3
+  },
+  "remaining_submission_work": [
+    "Capture Prefect UI and output screenshots",
+    "Complete the individual template"
+  ],
+  "pbi15": "Optional cloud deployment not implemented or verified yet"
+}

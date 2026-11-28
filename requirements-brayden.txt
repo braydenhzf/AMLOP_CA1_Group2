@@ -1,0 +1,2 @@
+# Install alongside the project's main requirements.
+seaborn>=0.13.2,<0.14
