@@ -5,6 +5,7 @@ from pathlib import Path
 from time import perf_counter
 from uuid import uuid4
 import os
+import json
 
 import pandas as pd
 
@@ -22,7 +23,7 @@ from src.features import (
     join_training_data,
     prepare_training_data,
 )
-from src.pipeline_training import train_available_models
+from src.pipeline_training import MODEL_NAMES, resolve_model_names, train_available_models
 from src.pipeline_data import reconcile_local_history
 from src.pipeline_splits import apply_reference_splits
 from src.pipeline_rds import reconcile_rds_history
@@ -148,7 +149,17 @@ def main():
                         help="Compressed transfer uses MySQL 8 JSON/COMPRESS SELECTs.")
     parser.add_argument("--history-cache", action="store_true",
                         help="Validate live RDS fingerprints before reusing accepted local history.")
+    parser.add_argument(
+        "--models", nargs="+", choices=MODEL_NAMES,
+        help="Explicit model versions to train; omit to train all six. Requires --train-local.",
+    )
     args = parser.parse_args()
+    if args.models is not None and not args.train_local:
+        parser.error("--models requires --train-local.")
+    try:
+        selected_models = resolve_model_names(args.models)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     if args.history_cache and not args.use_rds:
         parser.error("--history-cache requires --use-rds.")
@@ -188,6 +199,19 @@ def main():
     timings = StageTimings(report_dir, started=batch_start)
     print(f"Batch ID: {batch_id}", flush=True)
 
+    models = {}
+    selection = {
+        "scope": "all_six_versions" if selected_models == MODEL_NAMES else "selected_versions",
+        "requested_models": list(selected_models) if args.train_local else [],
+        "completed_models": [],
+        "all_six_models_completed": False,
+        "selected_cloud_workflow_completed": False,
+    }
+    if args.train_local:
+        print("Requested models: " + ", ".join(selected_models), flush=True)
+        (report_dir / "model_selection.json").write_text(
+            json.dumps(selection, indent=2) + "\n", encoding="utf-8",
+        )
     tracking_client = None
     experiment_id = None
 
@@ -349,6 +373,7 @@ def main():
                     rf_n_jobs=args.rf_jobs,
                     xgb_n_jobs=args.xgb_jobs,
                     model_workers=args.model_workers,
+                    model_names=selected_models,
                     tracking_client=tracking_client,
                     experiment_id=experiment_id,
                     batch_id=batch_id,
@@ -358,7 +383,7 @@ def main():
 
     except Exception as exc:
         try:
-            timings.finish(success=False)
+            timings.finish(success=False, model_selection=selection)
         except Exception:
             pass
         message = (
@@ -373,9 +398,20 @@ def main():
         parser.exit(1, message)
 
     elapsed = perf_counter() - batch_start
+    cloud_requested = bool(args.use_rds and args.write_rds and args.train_local and args.log_mlflow)
+    selection["completed_models"] = list(models)
+    selection["all_six_models_completed"] = set(models) == set(MODEL_NAMES)
+    selection["selected_cloud_workflow_completed"] = bool(
+        cloud_requested and set(models) == set(selected_models)
+    )
+    if args.train_local:
+        (report_dir / "model_selection.json").write_text(
+            json.dumps(selection, indent=2) + "\n", encoding="utf-8",
+        )
     performance = timings.finish(
         success=True, elapsed=elapsed,
-        complete_workflow=args.use_rds and args.write_rds and args.train_local and args.log_mlflow,
+        complete_workflow=cloud_requested and selection["all_six_models_completed"],
+        model_selection=selection,
     )
     print(f"Local preparation completed for {batch_id}.")
 
@@ -390,6 +426,10 @@ def main():
     print("Stage timings saved to stage_timings.csv and performance_summary.json.")
     if performance["complete_cloud_workflow"]:
         print("PBI 12 runtime requirement:", "MET" if performance["pbi12_runtime_check_passed"] else "NOT MET")
+    elif selection["selected_cloud_workflow_completed"]:
+        print(f"Selected-model rehearsal: {len(models)} of {len(MODEL_NAMES)} versions.")
+        print("Selected-model runtime (180s):", "MET" if performance["within_time_limit"] else "NOT MET")
+        print("This timing covers the selected models; the all-six-model criterion was not evaluated.")
     if args.write_rds:
         print("RDS insertion step completed; see rds_insert_summary.csv.")
     else:

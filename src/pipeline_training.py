@@ -1,4 +1,4 @@
-"""Fit all six model versions with bounded concurrency and shared logging."""
+"""Fit explicitly selected model versions; default to all six."""
 
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -15,6 +15,29 @@ from src.models.train_xgboost import train_xgboost
 from src.pipeline_tracking import log_model_outputs, tracked_model_run
 
 
+MODEL_NAMES = (
+    "brayden_lr_v1", "brayden_lr_v2", "vivian_rf_v1", "vivian_rf_v2",
+    "isabelle_xgb_v1", "isabelle_xgb_v2",
+)
+
+
+def resolve_model_names(model_names=None):
+    """Validate explicit selection and retain the standard reporting order."""
+    if model_names is None:
+        return MODEL_NAMES
+    if isinstance(model_names, str):
+        raise ValueError("Supply model names as a list, not one string.")
+    names = list(model_names)
+    if not names or any(not isinstance(name, str) for name in names):
+        raise ValueError("Select at least one valid model name.")
+    if len(names) != len(set(names)):
+        raise ValueError("Model selection contains duplicate names.")
+    unknown = sorted(set(names) - set(MODEL_NAMES))
+    if unknown:
+        raise ValueError(f"Unknown model names: {unknown}")
+    return tuple(name for name in MODEL_NAMES if name in names)
+
+
 def _fit_timed(name, fit_model):
     print(f"Training {name}...", flush=True)
     start = perf_counter()
@@ -24,7 +47,7 @@ def _fit_timed(name, fit_model):
 
 def train_available_models(
     X_train, y_train, X_validation, y_validation, report_dir, threshold,
-    rf_n_jobs=4, *, xgb_n_jobs=4, model_workers=1,
+    rf_n_jobs=4, *, xgb_n_jobs=4, model_workers=1, model_names=None,
     tracking_client=None, experiment_id=None, batch_id=None,
 ):
     """Fit training rows only; score fixed validation rows; preserve settings.
@@ -32,6 +55,7 @@ def train_available_models(
     Workers only fit models. MLflow access and report writes stay on the
     calling thread. Already completed results are saved if a later task fails.
     """
+    selected_names = resolve_model_names(model_names)
     for name, value in (("rf_n_jobs", rf_n_jobs), ("xgb_n_jobs", xgb_n_jobs)):
         if type(value) is not int or value == 0 or value < -1:
             raise ValueError(f"{name} must be -1 or a positive integer.")
@@ -56,6 +80,8 @@ def train_available_models(
         ("isabelle_xgb_v1", lambda: train_xgboost(X_train, y_train, version="v1", n_jobs=xgb_n_jobs)),
         ("isabelle_xgb_v2", lambda: train_xgboost(X_train, y_train, version="v2", n_jobs=xgb_n_jobs)),
     ]
+    tasks = [(name, fit) for name, fit in tasks if name in selected_names]
+    scope = "all_six_versions" if selected_names == MODEL_NAMES else "selected_versions"
     ranks = {name: i for i, (name, _) in enumerate(tasks)}
     models, results, pending = {}, [], {}
 
@@ -101,6 +127,7 @@ def train_available_models(
                 save_seconds = perf_counter() - started
                 result = {
                     "model": name, "threshold": threshold,
+                    "training_scope": scope,
                     "training_seconds": training_seconds,
                     "evaluation_seconds": evaluation_seconds,
                     "save_seconds": save_seconds,
@@ -123,6 +150,7 @@ def train_available_models(
                         "training_rows": len(y_train), "validation_rows": len(y_validation),
                         "feature_count": X_train.shape[1], "scored_split": "validation",
                         "model_workers": model_workers, "artifact_compression": "lzma:3",
+                        "training_scope": scope, "requested_models": ",".join(selected_names),
                     }
                     log_model_outputs(
                         tracking_client, run_id, parameters=parameters,

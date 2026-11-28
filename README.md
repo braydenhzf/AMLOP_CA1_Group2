@@ -485,3 +485,21 @@ The deliberate missing-input run, `batch-a9f9682b0987`, returned exit code 1. It
 6. Explain the saved controlled-failure example.
 
 The implementation and verification evidence are ready for review. Acceptance of the timing exception remains pending.
+
+### Selected-model fresh-insertion rehearsal
+
+Batch `batch-b16bf4d4f8a6` processed fresh practice-003 data in **139.96 seconds**, meeting the 180-second target for the selected-model workflow.
+
+The run:
+
+- Inserted 1,000 new records per RDS table.
+- Recognised 20 identical records per table, with zero conflicts.
+- Trained Vivian’s RF V2 and Isabelle’s XGBoost V2.
+- Logged both models’ parameters, validation metrics and artifacts to shared MLflow.
+- Preserved historical validation and test membership.
+
+The models were selected using the two highest fraud F1 scores from the preceding practice-002 run.
+
+This measurement used a prepared history cache, verified against live RDS fingerprints at launch. The preceding cache refresh took 310.95 seconds separately.
+
+This is a **two-model, prepared-cache result**. The earlier all-six-model fresh-insertion run took 202.38 seconds. Acceptance of the selected-model demonstration scope remains subject to the lecturer’s clarification.

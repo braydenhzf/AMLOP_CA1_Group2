@@ -58,7 +58,7 @@ class StageTimings:
         with self.stage(name):
             return function(*args, **kwargs)
 
-    def finish(self, *, success, elapsed=None, complete_workflow=False):
+    def finish(self, *, success, elapsed=None, complete_workflow=False, model_selection=None):
         elapsed = perf_counter() - self.started if elapsed is None else elapsed
         result = {
             "success": bool(success), "elapsed_seconds": elapsed,
@@ -69,6 +69,8 @@ class StageTimings:
             "timing_scope": "Main workflow; Python startup and external verification are excluded.",
             "note": "Nested stages overlap their parents; do not sum every CSV row.",
         }
+        if model_selection is not None:
+            result["model_selection"] = model_selection
         self._save()
         (self.report_dir / "performance_summary.json").write_text(
             json.dumps(result, indent=2) + "\n", encoding="utf-8"
