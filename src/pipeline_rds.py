@@ -63,7 +63,7 @@ def get_rds_row_counts():
     return counts
 
 
-def read_rds_history(batch_size=10000, transfer="rows"):
+def read_rds_history(batch_size=10000, transfer="rows", *, _connection=None):
     """Read every historical row within one consistent, read-only snapshot."""
     from src.pipeline_rds_transport import read_page
 
@@ -77,7 +77,7 @@ def read_rds_history(batch_size=10000, transfer="rows"):
         "labels": ("country_code", "order_id"),
     }
     tables = {}
-    with _read_snapshot() as connection:
+    with (_read_snapshot() if _connection is None else nullcontext(_connection)) as connection:
         with connection.cursor() as cursor:
             for name, columns in TABLE_COLUMNS.items():
                 columns = list(columns)
@@ -143,7 +143,7 @@ def normalize_rds_table(table_name, frame):
     return cleaned, issues
 
 def reconcile_rds_history(incoming_tables, report_dir, *, write_new=False,
-                          batch_size=None, transfer="rows", timings=None):
+                          batch_size=None, transfer="rows", timings=None, cache_dir=None):
     """Reconcile RDS history and optionally insert only new records."""
     from pathlib import Path
     from src.pipeline_data import combine_accepted_data
@@ -160,8 +160,16 @@ def reconcile_rds_history(incoming_tables, report_dir, *, write_new=False,
         read_options["batch_size"] = batch_size
     if transfer != "rows":
         read_options["transfer"] = transfer
+    cached_issues = None
     with timings.stage("rds_read_history") if timings else nullcontext():
-        historical_tables = read_rds_history(**read_options)
+        if cache_dir is not None:
+            from src.pipeline_rds_cache import load_verified_history
+            historical_tables, cached_issues = load_verified_history(
+                cache_dir, batch_size=batch_size or 100000,
+                transfer=transfer, report_dir=report_dir,
+            )
+        else:
+            historical_tables = read_rds_history(**read_options)
 
     keys = {
         "customers": ["customer_id"],
@@ -180,12 +188,14 @@ def reconcile_rds_history(incoming_tables, report_dir, *, write_new=False,
                 flush=True,
             )
 
-            history, history_issues = normalize_rds_table(
-                name,
-                historical_tables.pop(name),
-            )
-
-            history = normalize_rds_precision(name, history)
+            if cached_issues is None:
+                history, history_issues = normalize_rds_table(
+                    name, historical_tables.pop(name),
+                )
+                history = normalize_rds_precision(name, history)
+            else:
+                history = historical_tables.pop(name)
+                history_issues = cached_issues.pop(name)
             incoming = normalize_rds_precision(
                 name,
                 incoming_tables[name],

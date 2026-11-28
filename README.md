@@ -434,27 +434,54 @@ Generation refuses to overwrite an existing output folder.
 
 ### Verification and demonstration notes
 
-The practice-batch generator passed three offline tests.
+All 36 offline pipeline tests and three practice-batch tests passed.
 
-Output verification for batch-da16925b8978 confirmed:
-- RDS contains 1,000 practice records in each table.
-- The repeated batch inserted zero duplicates.
-- All six shared MLflow runs finished successfully.
-- Each run contains training/validation parameters, metrics and a model artifact.
-- The full run took 328.08 seconds, exceeding the 180-second requirement.
+Live verification confirmed:
 
-A deliberate missing-input test, batch-a9f9682b0987, returned exit code 1.
-Its failure.txt records the batch identifier, failed stage and error.
-Its performance summary records success as false.
+- The practice batch inserted 1,000 new records into each RDS table.
+- Repeating the batch inserted zero duplicates.
+- Historical validation and test membership remained fixed.
+- All six model versions trained and logged to shared MLflow.
+- Shared output checks verified finished runs, parameters, metrics and model artifacts.
+- A shared XGBoost V2 artifact was downloaded and successfully loaded with joblib.
 
-Demonstration sequence:
-1. Confirm RDS and shared MLflow are available.
-2. Explain the three input CSVs and expected record counts.
-3. Launch the integrated pipeline using the supplied URLs and configuration.
-4. Show the RDS records and duplicate-handling results.
-5. Show all six model runs, parameters, metrics and artifacts in shared MLflow.
-6. Show stage_timings.csv and performance_summary.json.
-7. Explain the controlled failure test and its saved failure report.
+### Performance results
 
-The final demonstration command and fresh-batch rehearsal will be confirmed
-after the runtime improvements in subtask #50. Subtask #51 remains in progress.
+The earlier integrated practice-batch run took 476.54 seconds. Optimised runs took 183.15 and 183.86 seconds.
+
+The improvements included compressed database transfers, larger read pages, compressed model artifacts, dense Random Forest features, verified history caching and simpler split assignment.
+
+The latest run, `batch-a4fa4bfb0782`, used a prepared history cache. Live content fingerprints were checked for all three RDS tables before reusing the cached records.
+
+Initial cache preparation took 940.43 seconds separately. Database changes can require another full refresh. The latest runs repeated an already-inserted batch; fresh-insertion performance under the final configuration has not been measured.
+
+The strict 180-second criterion remains unmet. The lecturer’s guidance about timing flexibility is context for review; the measured result is 183.86 seconds.
+
+### Effect on model results
+
+All six models still trained on 569,199 training orders and were evaluated on the same 189,826 validation orders. The 191,847 test orders remained reserved.
+
+Random Forest retained 100 trees, maximum depth 12, minimum leaf size 20, seed 42 and its original class weights. The classification threshold remained 0.5.
+
+Compared with the earlier practice-batch run, recorded validation metrics were unchanged for five models. RF V2 changed slightly after switching to dense features:
+
+| Metric | Earlier run | Optimised run |
+| --- | --- | --- |
+| Accuracy | 79.5323% | 79.5618% |
+| Fraud precision | 35.4925% | 35.5161% |
+| Fraud recall | 78.6687% | 78.5587% |
+
+### Failure handling
+
+The deliberate missing-input run, `batch-a9f9682b0987`, returned exit code 1. Its `failure.txt` recorded the batch identifier, failed stage and error. Its performance summary recorded `success: false`.
+
+### Demonstration sequence
+
+1. Show the practice CSVs and expected first-run and repeat-run counts.
+2. Launch the integrated pipeline with RDS writes, shared MLflow logging and verified history caching enabled.
+3. Show the reconciliation and insertion receipts.
+4. Show all six shared MLflow runs, parameters, metrics and artifacts.
+5. Show `stage_timings.csv`, `performance_summary.json` and the cache receipt.
+6. Explain the saved controlled-failure example.
+
+The implementation and verification evidence are ready for review. Acceptance of the timing exception remains pending.

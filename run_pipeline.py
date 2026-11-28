@@ -146,7 +146,12 @@ def main():
                         help="Historical rows per database query; all rows are read.")
     parser.add_argument("--rds-transfer", choices=("rows", "compressed"), default="rows",
                         help="Compressed transfer uses MySQL 8 JSON/COMPRESS SELECTs.")
+    parser.add_argument("--history-cache", action="store_true",
+                        help="Validate live RDS fingerprints before reusing accepted local history.")
     args = parser.parse_args()
+
+    if args.history_cache and not args.use_rds:
+        parser.error("--history-cache requires --use-rds.")
 
     if args.write_rds and not args.use_rds:
         parser.error("--write-rds requires --use-rds.")
@@ -252,6 +257,7 @@ def main():
                 batch_size=args.rds_batch_size,
                 transfer=args.rds_transfer,
                 timings=timings,
+                cache_dir=project_root / "data/raw/cache/pbi12" if args.history_cache else None,
             )
 
             print(reconciliation_summary.to_string(index=False))
