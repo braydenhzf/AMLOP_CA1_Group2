@@ -59,21 +59,16 @@ def apply_reference_splits(metadata, reference):
     if set(reference["split"]) != set(SPLIT_NAMES):
         raise ValueError("Reference must contain train, validation and test.")
 
-    current_keys = pd.MultiIndex.from_frame(metadata[KEYS])
-    reference_keys = pd.MultiIndex.from_frame(reference[KEYS])
-
-    if not reference_keys.isin(current_keys).all():
-        raise ValueError(
-            "Historical reference orders are missing from current data."
-        )
-
     membership = metadata[KEYS].merge(
         reference[KEYS + ["split"]],
         on=KEYS,
         how="left",
         sort=False,
-        validate="one_to_one",
     )
+    # Unique keys on both sides make matched-row count a complete coverage check.
+    if int(membership["split"].notna().sum()) != len(reference):
+        raise ValueError("Historical reference orders are missing from current data.")
+
     assignments = membership["split"].fillna("train").to_numpy()
 
     return {

@@ -1,6 +1,6 @@
 """RDS history reconciliation and optional insertion for PBI 10."""
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 
 import pandas as pd
 import pymysql
@@ -63,101 +63,44 @@ def get_rds_row_counts():
     return counts
 
 
-def read_rds_history(batch_size=10000):
-    """Read all historical records in smaller queries within one snapshot."""
-    if not isinstance(batch_size, int) or batch_size < 1:
-        raise ValueError("batch_size must be a positive integer.")
+def read_rds_history(batch_size=10000, transfer="rows", *, _connection=None):
+    """Read every historical row within one consistent, read-only snapshot."""
+    from src.pipeline_rds_transport import read_page
 
+    if type(batch_size) is not int or batch_size < 1:
+        raise ValueError("batch_size must be a positive integer.")
+    if transfer not in {"rows", "compressed"}:
+        raise ValueError("transfer must be rows or compressed.")
     table_keys = {
         "customers": ("country_code", "customer_id"),
         "orders": ("country_code", "order_id"),
         "labels": ("country_code", "order_id"),
     }
     tables = {}
-
-    with _read_snapshot() as connection:
+    with (_read_snapshot() if _connection is None else nullcontext(_connection)) as connection:
         with connection.cursor() as cursor:
-            for table_name, columns in TABLE_COLUMNS.items():
+            for name, columns in TABLE_COLUMNS.items():
                 columns = list(columns)
-                first_key, second_key = table_keys[table_name]
-
-                selected_columns = ", ".join(
-                    f"`{column}`" for column in columns
-                )
-
-                cursor.execute(
-                    f"SELECT COUNT(*) FROM `{table_name}`"
-                )
-                expected_rows = int(cursor.fetchone()[0])
-
-                chunks = []
-                received = 0
-                last_key = None
-
-                while received < expected_rows:
-                    query = (
-                        f"SELECT {selected_columns} "
-                        f"FROM `{table_name}`"
+                cursor.execute(f"SELECT COUNT(*) FROM `{name}`")
+                expected = int(cursor.fetchone()[0])
+                chunks, received, last_key = [], 0, None
+                while received < expected:
+                    rows, final_key = read_page(
+                        cursor, name, columns, table_keys[name],
+                        last_key, batch_size, transfer,
                     )
-                    parameters = []
-
-                    if last_key is not None:
-                        query += (
-                            f" WHERE (`{first_key}` > %s)"
-                            f" OR (`{first_key}` = %s"
-                            f" AND `{second_key}` > %s)"
-                        )
-                        parameters.extend([
-                            last_key[0],
-                            last_key[0],
-                            last_key[1],
-                        ])
-
-                    query += (
-                        f" ORDER BY `{first_key}`, `{second_key}`"
-                        " LIMIT %s"
-                    )
-                    parameters.append(batch_size)
-
-                    cursor.execute(query, tuple(parameters))
-                    rows = cursor.fetchall()
-
-                    if not rows:
-                        raise ValueError(
-                            f"RDS {table_name}: read stopped "
-                            "before all rows arrived."
-                        )
-
-                    chunks.append(
-                        pd.DataFrame.from_records(
-                            rows,
-                            columns=columns,
-                        )
-                    )
+                    if not rows or final_key is None or final_key == last_key:
+                        raise ValueError(f"RDS {name}: read stopped before all rows arrived.")
+                    if received + len(rows) > expected:
+                        raise ValueError(f"RDS {name}: read exceeded snapshot row count.")
+                    chunks.append(pd.DataFrame.from_records(rows, columns=columns))
                     received += len(rows)
-
-                    last_row = rows[-1]
-                    last_key = (
-                        last_row[columns.index(first_key)],
-                        last_row[columns.index(second_key)],
-                    )
-
-                    print(
-                        f"RDS {table_name}: "
-                        f"{received:,}/{expected_rows:,} rows",
-                        flush=True,
-                    )
-
-                if chunks:
-                    tables[table_name] = pd.concat(
-                        chunks,
-                        ignore_index=True,
-                    )
-                else:
-                    tables[table_name] = pd.DataFrame(
-                        columns=columns,
-                    )
-
+                    last_key = final_key
+                    print(f"RDS {name}: {received:,}/{expected:,} rows ({transfer})", flush=True)
+                tables[name] = (
+                    pd.concat(chunks, ignore_index=True)
+                    if chunks else pd.DataFrame(columns=columns)
+                )
     return tables
 
 def normalize_rds_table(table_name, frame):
@@ -199,7 +142,8 @@ def normalize_rds_table(table_name, frame):
 
     return cleaned, issues
 
-def reconcile_rds_history(incoming_tables, report_dir, *, write_new=False):
+def reconcile_rds_history(incoming_tables, report_dir, *, write_new=False,
+                          batch_size=None, transfer="rows", timings=None, cache_dir=None):
     """Reconcile RDS history and optionally insert only new records."""
     from pathlib import Path
     from src.pipeline_data import combine_accepted_data
@@ -211,7 +155,21 @@ def reconcile_rds_history(incoming_tables, report_dir, *, write_new=False):
     report_dir = Path(report_dir)
     report_dir.mkdir(parents=True, exist_ok=True)
 
-    historical_tables = read_rds_history()
+    read_options = {}
+    if batch_size is not None:
+        read_options["batch_size"] = batch_size
+    if transfer != "rows":
+        read_options["transfer"] = transfer
+    cached_issues = None
+    with timings.stage("rds_read_history") if timings else nullcontext():
+        if cache_dir is not None:
+            from src.pipeline_rds_cache import load_verified_history
+            historical_tables, cached_issues = load_verified_history(
+                cache_dir, batch_size=batch_size or 100000,
+                transfer=transfer, report_dir=report_dir,
+            )
+        else:
+            historical_tables = read_rds_history(**read_options)
 
     keys = {
         "customers": ["customer_id"],
@@ -224,46 +182,49 @@ def reconcile_rds_history(incoming_tables, report_dir, *, write_new=False):
     summaries = []
 
     for name in TABLE_COLUMNS:
-        print(
-            f"Reconciling RDS and incoming {name}...",
-            flush=True,
-        )
+        with timings.stage(f"rds_reconcile_{name}") if timings else nullcontext():
+            print(
+                f"Reconciling RDS and incoming {name}...",
+                flush=True,
+            )
 
-        history, history_issues = normalize_rds_table(
-            name,
-            historical_tables.pop(name),
-        )
+            if cached_issues is None:
+                history, history_issues = normalize_rds_table(
+                    name, historical_tables.pop(name),
+                )
+                history = normalize_rds_precision(name, history)
+            else:
+                history = historical_tables.pop(name)
+                history_issues = cached_issues.pop(name)
+            incoming = normalize_rds_precision(
+                name,
+                incoming_tables[name],
+            )
 
-        history = normalize_rds_precision(name, history)
-        incoming = normalize_rds_precision(
-            name,
-            incoming_tables[name],
-        )
+            combined, conflicts, counts = combine_accepted_data(
+                history,
+                incoming,
+                keys[name],
+            )
 
-        combined, conflicts, counts = combine_accepted_data(
-            history,
-            incoming,
-            keys[name],
-        )
+            new_tables[name] = select_new_records(
+                history,
+                incoming,
+                keys[name],
+            )
 
-        new_tables[name] = select_new_records(
-            history,
-            incoming,
-            keys[name],
-        )
+            combined_tables[name] = combined
+            summaries.append({"dataset": name, **counts})
 
-        combined_tables[name] = combined
-        summaries.append({"dataset": name, **counts})
+            history_issues.to_csv(
+                report_dir / f"{name}_rds_history_issues.csv",
+                index=False,
+            )
 
-        history_issues.to_csv(
-            report_dir / f"{name}_rds_history_issues.csv",
-            index=False,
-        )
-
-        conflicts.to_csv(
-            report_dir / f"{name}_rds_history_conflicts.csv",
-            index=False,
-        )
+            conflicts.to_csv(
+                report_dir / f"{name}_rds_history_conflicts.csv",
+                index=False,
+            )
 
     reconciliation_summary = pd.DataFrame(summaries)
 
@@ -273,41 +234,42 @@ def reconcile_rds_history(incoming_tables, report_dir, *, write_new=False):
     )
 
     if write_new:
-        planned_counts = {
-            name: len(frame)
-            for name, frame in new_tables.items()
-        }
-
-        if any(planned_counts.values()):
-            settings = get_database_settings()
-
-            with pymysql.connect(
-                **settings.connection_kwargs(),
-                read_timeout=30,
-                write_timeout=30,
-                autocommit=False,
-            ) as connection:
-                inserted_counts = insert_new_records(
-                    connection,
-                    new_tables,
-                )
-        else:
-            inserted_counts = planned_counts
-
-        insertion_summary = pd.DataFrame([
-            {
-                "dataset": name,
-                "inserted_rows": count,
+        with timings.stage("rds_write") if timings else nullcontext():
+            planned_counts = {
+                name: len(frame)
+                for name, frame in new_tables.items()
             }
-            for name, count in inserted_counts.items()
-        ])
 
-        insertion_summary.to_csv(
-            report_dir / "rds_insert_summary.csv",
-            index=False,
-        )
+            if any(planned_counts.values()):
+                settings = get_database_settings()
 
-        print(insertion_summary.to_string(index=False))
+                with pymysql.connect(
+                    **settings.connection_kwargs(),
+                    read_timeout=30,
+                    write_timeout=30,
+                    autocommit=False,
+                ) as connection:
+                    inserted_counts = insert_new_records(
+                        connection,
+                        new_tables,
+                    )
+            else:
+                inserted_counts = planned_counts
+
+            insertion_summary = pd.DataFrame([
+                {
+                    "dataset": name,
+                    "inserted_rows": count,
+                }
+                for name, count in inserted_counts.items()
+            ])
+
+            insertion_summary.to_csv(
+                report_dir / "rds_insert_summary.csv",
+                index=False,
+            )
+
+            print(insertion_summary.to_string(index=False))
 
     return combined_tables, reconciliation_summary
 

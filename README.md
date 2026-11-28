@@ -415,3 +415,91 @@ The integrated repeat run completed in 476.54 seconds.
 
 PBI 10 implementation and live verification are ready for review.
 The three-minute performance requirement remains work for PBI 12.
+
+## Pipeline rehearsal (PBI 12)
+
+Generate the offline practice batch:
+
+```powershell
+python prepare_practice_batch.py --history-dir data/raw --split-manifest reports/pipeline/reference_splits.csv
+```
+
+The default batch contains 1,000 synthetic new records and 20 historical
+records per dataset. Expected first-run inserts are 1,000 per table;
+repeating the same batch should insert zero additional records.
+
+Generated CSVs, expected counts and checksums are saved under
+data/raw/incoming/pbi12/practice-001/. This folder is ignored by Git.
+Generation refuses to overwrite an existing output folder.
+
+### Verification and demonstration notes
+
+All 36 offline pipeline tests and three practice-batch tests passed.
+
+Live verification confirmed:
+
+- The practice batch inserted 1,000 new records into each RDS table.
+- Repeating the batch inserted zero duplicates.
+- Historical validation and test membership remained fixed.
+- All six model versions trained and logged to shared MLflow.
+- Shared output checks verified finished runs, parameters, metrics and model artifacts.
+- A shared XGBoost V2 artifact was downloaded and successfully loaded with joblib.
+
+### Performance results
+
+The earlier integrated practice-batch run took 476.54 seconds. Optimised runs took 183.15 and 183.86 seconds.
+
+The improvements included compressed database transfers, larger read pages, compressed model artifacts, dense Random Forest features, verified history caching and simpler split assignment.
+
+The latest run, `batch-a4fa4bfb0782`, used a prepared history cache. Live content fingerprints were checked for all three RDS tables before reusing the cached records.
+
+Initial cache preparation took 940.43 seconds separately. Database changes can require another full refresh. The latest runs repeated an already-inserted batch; fresh-insertion performance under the final configuration has not been measured.
+
+The strict 180-second criterion remains unmet. The lecturer’s guidance about timing flexibility is context for review; the measured result is 183.86 seconds.
+
+### Effect on model results
+
+All six models still trained on 569,199 training orders and were evaluated on the same 189,826 validation orders. The 191,847 test orders remained reserved.
+
+Random Forest retained 100 trees, maximum depth 12, minimum leaf size 20, seed 42 and its original class weights. The classification threshold remained 0.5.
+
+Compared with the earlier practice-batch run, recorded validation metrics were unchanged for five models. RF V2 changed slightly after switching to dense features:
+
+| Metric | Earlier run | Optimised run |
+| --- | --- | --- |
+| Accuracy | 79.5323% | 79.5618% |
+| Fraud precision | 35.4925% | 35.5161% |
+| Fraud recall | 78.6687% | 78.5587% |
+
+### Failure handling
+
+The deliberate missing-input run, `batch-a9f9682b0987`, returned exit code 1. Its `failure.txt` recorded the batch identifier, failed stage and error. Its performance summary recorded `success: false`.
+
+### Demonstration sequence
+
+1. Show the practice CSVs and expected first-run and repeat-run counts.
+2. Launch the integrated pipeline with RDS writes, shared MLflow logging and verified history caching enabled.
+3. Show the reconciliation and insertion receipts.
+4. Show all six shared MLflow runs, parameters, metrics and artifacts.
+5. Show `stage_timings.csv`, `performance_summary.json` and the cache receipt.
+6. Explain the saved controlled-failure example.
+
+The implementation and verification evidence are ready for review. Acceptance of the timing exception remains pending.
+
+### Selected-model fresh-insertion rehearsal
+
+Batch `batch-b16bf4d4f8a6` processed fresh practice-003 data in **139.96 seconds**, meeting the 180-second target for the selected-model workflow.
+
+The run:
+
+- Inserted 1,000 new records per RDS table.
+- Recognised 20 identical records per table, with zero conflicts.
+- Trained Vivian’s RF V2 and Isabelle’s XGBoost V2.
+- Logged both models’ parameters, validation metrics and artifacts to shared MLflow.
+- Preserved historical validation and test membership.
+
+The models were selected using the two highest fraud F1 scores from the preceding practice-002 run.
+
+This measurement used a prepared history cache, verified against live RDS fingerprints at launch. The preceding cache refresh took 310.95 seconds separately.
+
+This is a **two-model, prepared-cache result**. The earlier all-six-model fresh-insertion run took 202.38 seconds. Acceptance of the selected-model demonstration scope remains subject to the lecturer’s clarification.
